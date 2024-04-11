@@ -11,3 +11,5 @@ Built for the 258+ Automation
 - `tier_three_sequencing`: Sequence a CSV file of SOL transactions in a certain period of time `beginning_timestamp` to `ending_timestamp` in a CSV file with format [timestamp, received_amount, sender_account] and filter out the first 258 transactions by timestamp and record the results in a CSV file.
 
 ## License: MIT
+
+Check the [LICENSE](LICENSE) file for more details.
