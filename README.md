@@ -10,15 +10,17 @@ Built for the 258+ Automation
 
 - `tier_three_sequencing`: Sequence a CSV file of SOL transactions in a certain period of time `beginning_timestamp` to `ending_timestamp` in a CSV file with format [timestamp, received_amount, sender_account] and filter out the first 258 transactions by timestamp and record the results in a CSV file.
 
-## Install
+## Build and Run
 
-To install, use `make install`
+### Install Dependencies
 
-## Build
+To install, use `make init`
+
+### Build
 
 To build, use `make build`
 
-## Run
+### Run
 
 To run, use `make run`
 
