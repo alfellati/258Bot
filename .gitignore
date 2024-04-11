@@ -1,0 +1,13 @@
+# Ignore compiled binaries
+/target/
+
+# Ignore IDE files
+.idea/
+.vscode/
+
+# Ignore system files
+.DS_Store
+Thumbs.db
+
+# Ignore environment files
+.env
