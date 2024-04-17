@@ -1,100 +1,97 @@
-//! This is a part of 258 Bot
-//
 use solana_client::rpc_client::RpcClient;
-use solana_sdk::{
-    pubkey::Pubkey,
-    signature::{read_keypair_file, Keypair},
-    transaction::Transaction,
-};
-use spl_token::instruction::transfer;
-use std::{fs, str::FromStr, error::Error};
-use csv::ReaderBuilder;
+use std::collections::{HashMap, HashSet};
+use std::fs::File;
+use std::io::prelude::*;
+use std::path::Path;
 
-fn make_airdrop(csv_file: &str) -> Result<(), Box<dyn Error>> {
-    // Load the sender's keypair path from .env file
-    dotenv::dotenv().ok();
-    let sender_keypair_path = std::env::var("SENDER_KEYPAIR_PATH")?;
-    let sender_keypair = read_keypair_file(&sender_keypair_path)?;
-    let sender_pubkey = sender_keypair.pubkey();
+struct Transaction {
+    sender: String,
+    receiver: String,
+    amount: f64,
+    slot: u64, // Using slot instead of timestamp
+}
 
-    // Connect to Solana cluster
-    let rpc_client = RpcClient::new("https://api.mainnet-beta.solana.com");
+fn check_solana_transactions(
+    target_receiver_account: &str,
+    beginning_block_number: u64,
+    ending_block_number: u64,
+    transactions: &[Transaction],
+    presale_balances: &mut HashMap<String, u64>,
+    presale_allocations: &mut HashMap<String, u64>,
+) {
+    let mut total_raised_amount = 0.0;
+    let mut unique_accounts = HashSet::new();
+    let presale_amount: u64 = 774_000_000;
 
-    // Token details
-    let token_mint = Pubkey::from_str("TokenMintAddressHere")?;
-    let sender_token_account = Pubkey::from_str("SenderTokenAccountAddressHere")?;
-
-    // Read account details from the CSV file
-    let file = fs::File::open(csv_file)?;
-    let mut rdr = ReaderBuilder::new().from_reader(file);
-
-    // Initialize variables for batching
-    let mut transfer_instructions = vec![];
-    let batch_size = 1000; // Number of transfers to include in each batch
-
-    for result in rdr.records() {
-        let record = result?;
-        let recipient_pubkey = Pubkey::from_str(&record[0])?;
-        let amount: u64 = record[1].parse()?;
-
-        let recipient_token_account = derive_token_account_address(&recipient_pubkey, &token_mint);
-
-        let transfer_instruction = transfer(
-            &spl_token::id(),
-            &sender_token_account,
-            &recipient_token_account,
-            &sender_pubkey,
-            &[&sender_pubkey],
-            amount,
-        )?;
-
-        transfer_instructions.push(transfer_instruction);
-
-        // Check if the batch size is reached
-        if transfer_instructions.len() == batch_size {
-            // Create and sign transaction
-            let recent_blockhash = rpc_client.get_recent_blockhash()?.0;
-            let transaction = Transaction::new_signed_with_payer(
-                &transfer_instructions,
-                Some(&sender_pubkey),
-                &[&sender_keypair],
-                recent_blockhash,
-            );
-
-            // Send transaction
-            let result = rpc_client.send_and_confirm_transaction(&transaction);
-            println!("Batch Transaction result: {:?}", result);
-
-            // Clear the transfer instructions for the next batch
-            transfer_instructions.clear();
+    for transaction in transactions {
+        if transaction.receiver == target_receiver_account
+            && transaction.slot >= beginning_block_number
+            && transaction.slot <= ending_block_number
+            && transaction.amount >= 0.1
+        {
+            total_raised_amount += transaction.amount;
+            unique_accounts.insert(&transaction.sender);
+            *presale_balances.entry(transaction.sender.clone()).or_insert(0) += transaction.amount as u64;
         }
     }
 
-    // Process any remaining transfers
-    if !transfer_instructions.is_empty() {
-        let recent_blockhash = rpc_client.get_recent_blockhash()?.0;
-        let transaction = Transaction::new_signed_with_payer(
-            &transfer_instructions,
-            Some(&sender_pubkey),
-            &[&sender_keypair],
-            recent_blockhash,
-        );
-
-        let result = rpc_client.send_and_confirm_transaction(&transaction);
-        println!("Batch Transaction result: {:?}", result);
+    for (account, amount) in presale_balances.iter() {
+        let presale_share = (*amount as f64 * 100.0) / total_raised_amount;
+        let alloc = (presale_amount as f64 * presale_share) as u64 / 100;
+        *presale_allocations.entry(account.clone()).or_insert(0) += alloc;
     }
+}
+
+fn fetch_solana_transactions(
+    target_receiver_account: &str,
+    beginning_block_number: u64,
+    ending_block_number: u64,
+) -> Vec<Transaction> {
+    let rpc_client = RpcClient::new("https://api.mainnet-beta.solana.com".to_string());
+    let transactions = rpc_client.get_transactions(target_receiver_account, ending_block_number - beginning_block_number, Some(beginning_block_number)).unwrap();
+    
+    transactions.into_iter().map(|tx| {
+        Transaction {
+            sender: tx.sender.to_string(),
+            receiver: tx.receiver.to_string(),
+            amount: tx.amount,
+            slot: tx.slot,
+        }
+    }).collect()
+}
+
+fn fetch_block_number() -> u64 {
+    let rpc_client = RpcClient::new("https://api.mainnet-beta.solana.com".to_string());
+    let block_info = rpc_client.get_block_production().unwrap();
+    block_info.block_height
+}
+
+fn save_to_json_file(file_path: &str, data: &HashMap<String, u64>) -> std::io::Result<()> {
+    let json_data = serde_json::to_string(data)?;
+
+    let mut file = File::create(file_path)?;
+    file.write_all(json_data.as_bytes())?;
 
     Ok(())
 }
 
-// Function to derive or find the recipient's token account address
-fn derive_token_account_address(recipient: &Pubkey, token_mint: &Pubkey) -> Pubkey {
-    // Placeholder logic to derive or find the recipient's token account address
-    *recipient // Replace with actual logic
-}
-
 fn main() {
-    if let Err(err) = make_airdrop("accounts.csv") {
-        eprintln!("Error: {}", err);
-    }
+    let target_receiver_account = "EWFNcP9W8RiaUZPqa6baaiZR3wDoPxy1N3g8dAhrnSFe";
+    let beginning_block_number = 260669993; // April 17, 2024 14:34:30 UTC
+
+    // Fetch current block number
+    let ending_block_number = fetch_block_number();
+
+    let transactions = fetch_solana_transactions(target_receiver_account, beginning_block_number, ending_block_number);
+    
+    let mut presale_balances = HashMap::new();
+    let mut presale_allocations = HashMap::new();
+
+    let balances_file_path = "../dist/presale_balances.json";
+    let allocations_file_path = "../dist/presale_allocations.json";
+
+    save_to_json_file(balances_file_path, &presale_balances).unwrap();
+    save_to_json_file(allocations_file_path, &presale_allocations).unwrap();
+
+    check_solana_transactions(target_receiver_account, beginning_block_number, ending_block_number, &transactions, &mut presale_balances, &mut presale_allocations);
 }
